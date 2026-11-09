@@ -1,0 +1,13 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> dieses Repo wählen
+services:
+  - type: web
+    name: trading-assistant
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_PASSWORD
+        generateValue: true      # Passwort wird generiert, im Dashboard unter Environment sichtbar
+      - key: ANTHROPIC_API_KEY
+        sync: false              # beim Anlegen im Dashboard eintragen
