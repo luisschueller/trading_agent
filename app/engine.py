@@ -6,6 +6,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
+import pandas as pd
+
 from . import ai as ai_module
 from .data import MarketDataProvider, normalize_currency
 from .models import (
@@ -71,12 +73,10 @@ def analyze(
         if t in holdings:  # doppelte Zeilen zusammenfassen
             old = holdings[t]
             tot = old.shares + p.shares
-            avg = None
-            if old.avg_cost and p.avg_cost:
-                avg = (old.avg_cost * old.shares + p.avg_cost * p.shares) / tot
-            holdings[t] = Position(ticker=t, shares=tot, avg_cost=avg)
+            dates = [d for d in (old.purchase_date, p.purchase_date) if d]
+            holdings[t] = Position(ticker=t, shares=tot, purchase_date=min(dates) if dates else None)
         else:
-            holdings[t] = Position(ticker=t, shares=p.shares, avg_cost=p.avg_cost)
+            holdings[t] = Position(ticker=t, shares=p.shares, purchase_date=p.purchase_date)
 
     all_tickers = _clean(universe + list(holdings))
     if not all_tickers:
@@ -84,6 +84,9 @@ def analyze(
 
     # --- Kurse & Kennzahlen
     hist = provider.history(all_tickers)
+    dated = [h.purchase_date for h in holdings.values() if h.purchase_date]
+    if dated:  # längere Historie für gehaltene Titel, damit der Kurs am Kaufdatum verfügbar ist
+        hist.update(provider.history(list(holdings), start=min(dated)))
     metrics = {}
     for t in all_tickers:
         if t in hist:
@@ -124,7 +127,17 @@ def analyze(
         fx = provider.fx_rate(ccy, st.base_currency)
         if fx is None:
             warnings.append(f"{t}: Wechselkurs {ccy}->{st.base_currency} nicht verfügbar.")
+        entry = None
+        pos = holdings.get(t)
+        if pos and pos.purchase_date:
+            s = hist[t]
+            after = s[s.index >= pd.Timestamp(pos.purchase_date)]
+            if after.empty or (after.index[0].date() - pos.purchase_date).days > 7:
+                warnings.append(f"{t}: Kein Kurs zum Kaufdatum {pos.purchase_date:%d.%m.%Y} verfügbar.")
+            else:
+                entry = float(after.iloc[0]) * factor
         quotes[t] = {
+            "entry_price": entry,
             "price": price,
             "price_base": price * fx if fx else None,
             "currency": ccy,

@@ -11,7 +11,7 @@ class DemoProvider:
     def resolve(self, symbol: str) -> str | None:
         return symbol.strip().upper()
 
-    def history(self, tickers):
+    def history(self, tickers, start=None):
         out = {}
         for t in tickers:
             seed = zlib.crc32(t.encode())

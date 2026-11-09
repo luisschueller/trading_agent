@@ -58,7 +58,9 @@ def _payload(recs: list[Recommendation], news: dict[str, list[dict]], base_ccy: 
                 "trade_wert": round(r.trade_value, 2),
                 "gruende_modell": r.reasons,
                 "kennzahlen": r.metrics,
-                "gewinn_verlust_seit_kauf": round(r.pnl_pct, 4) if r.pnl_pct is not None else None,
+                "kaufdatum": r.purchase_date.isoformat() if r.purchase_date else None,
+                "haltedauer_tage": r.holding_days,
+                "kursentwicklung_seit_kauf": round(r.pnl_pct, 4) if r.pnl_pct is not None else None,
                 "nachrichten": news.get(r.ticker, []),
             }
         )

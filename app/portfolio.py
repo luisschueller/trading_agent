@@ -8,6 +8,7 @@ Ablauf:
 """
 from __future__ import annotations
 
+import datetime as dt
 import math
 
 import pandas as pd
@@ -167,8 +168,12 @@ def build_recommendations(
                 ]
             }
         pos = holdings.get(t)
-        if pos and pos.avg_cost and q.get("price"):
-            r.pnl_pct = q["price"] / pos.avg_cost - 1
+        if pos and pos.purchase_date:
+            r.purchase_date = pos.purchase_date
+            r.holding_days = (dt.date.today() - pos.purchase_date).days
+            if q.get("entry_price") and q.get("price"):
+                r.entry_price = q["entry_price"]
+                r.pnl_pct = q["price"] / q["entry_price"] - 1
         return r
 
     def set_trade(r: Recommendation, target_value: float) -> None:

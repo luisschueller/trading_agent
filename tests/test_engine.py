@@ -23,7 +23,7 @@ class FakeProvider:
     def resolve(self, s):
         return {"US0378331005": "AAPL"}.get(s, s)
 
-    def history(self, tickers):
+    def history(self, tickers, start=None):
         return {t: self.data[t] for t in tickers if t in self.data}
 
     def quote_meta(self, t):
@@ -131,3 +131,29 @@ def test_currency_conversion_and_isin():
     aapl = next(r for r in res.recommendations if r.ticker == "AAPL")
     assert aapl.price_base == pytest.approx(aapl.price * 0.9)
     assert res.total_value == pytest.approx(aapl.current_value)
+
+
+def test_purchase_date_performance():
+    data = {"AAPL": series(0.002, seed=3), "MSFT": series(0.0018, seed=4)}
+    buy = pd.Timestamp("2025-06-01").date()  # Sonntag -> erster Handelstag danach
+    req = AnalyzeRequest(universe=["AAPL", "MSFT"],
+                         portfolio=Portfolio(positions=[Position(ticker="AAPL", shares=10, purchase_date=buy)], cash=0),
+                         settings=Settings(num_positions=2, max_weight=0.6, use_ai=False))
+    res = analyze(req, FakeProvider(data), reviewer=None)
+    aapl = next(r for r in res.recommendations if r.ticker == "AAPL")
+    s = data["AAPL"]
+    expected_entry = float(s[s.index >= "2025-06-02"].iloc[0])
+    assert aapl.purchase_date == buy and aapl.holding_days > 0
+    assert aapl.entry_price == pytest.approx(expected_entry)
+    assert aapl.pnl_pct == pytest.approx(float(s.iloc[-1]) / expected_entry - 1)
+
+
+def test_purchase_date_outside_history_warns():
+    data = {"AAPL": series(0.002, seed=3)}
+    req = AnalyzeRequest(universe=["AAPL"],
+                         portfolio=Portfolio(positions=[Position(ticker="AAPL", shares=1,
+                                                                 purchase_date=pd.Timestamp("2015-01-05").date())]),
+                         settings=Settings(use_ai=False))
+    res = analyze(req, FakeProvider(data), reviewer=None)
+    assert any("Kaufdatum" in w for w in res.warnings)
+    assert next(r for r in res.recommendations if r.ticker == "AAPL").pnl_pct is None

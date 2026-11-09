@@ -1,6 +1,7 @@
 """Datenmodelle für Ein- und Ausgabe."""
 from __future__ import annotations
 
+import datetime as dt
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -9,7 +10,7 @@ from pydantic import BaseModel, Field
 class Position(BaseModel):
     ticker: str
     shares: float
-    avg_cost: Optional[float] = None  # Einstandskurs in Handelswährung (optional)
+    purchase_date: Optional[dt.date] = None  # Kaufdatum (optional) – für Wertentwicklung seit Kauf
 
 
 class Portfolio(BaseModel):
@@ -84,7 +85,10 @@ class Recommendation(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     metrics: dict = Field(default_factory=dict)
     ai: Optional[TickerAssessment] = None
-    pnl_pct: Optional[float] = None
+    purchase_date: Optional[dt.date] = None
+    holding_days: Optional[int] = None
+    entry_price: Optional[float] = None  # Schlusskurs am Kaufdatum (Handelswährung)
+    pnl_pct: Optional[float] = None  # Kursentwicklung seit Kaufdatum
 
 
 class RankingRow(BaseModel):

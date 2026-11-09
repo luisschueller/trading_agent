@@ -27,7 +27,7 @@ SUBUNITS = {"GBp": ("GBP", 0.01), "GBX": ("GBP", 0.01), "ZAc": ("ZAR", 0.01), "I
 
 class MarketDataProvider(Protocol):
     def resolve(self, symbol: str) -> str | None: ...
-    def history(self, tickers: list[str]) -> dict[str, pd.Series]: ...
+    def history(self, tickers: list[str], start: dt.date | None = None) -> dict[str, pd.Series]: ...
     def quote_meta(self, ticker: str) -> dict: ...  # {"currency":..., "name":...}
     def news(self, ticker: str, limit: int = 8) -> list[dict]: ...
     def fx_rate(self, from_ccy: str, to_ccy: str) -> float | None: ...
@@ -91,20 +91,28 @@ class YFinanceProvider:
             log.warning("ISIN %s nicht auflösbar: %s", s, e)
             return None
 
-    def history(self, tickers: list[str]) -> dict[str, pd.Series]:
+    def history(self, tickers: list[str], start: dt.date | None = None) -> dict[str, pd.Series]:
+        """Schlusskurse ab `start` (Standard: ca. 2 Jahre zurück), tagesweise gecacht."""
+        default_start = dt.date.today() - dt.timedelta(days=740)
+        start = min(start or default_start, default_start)
         path = self._hist_cache_path()
         cache: dict[str, pd.Series] = {}
+        fetched_from: dict[str, str] = {}
         if path.exists():
             try:
-                cache = pickle.loads(path.read_bytes())
+                stored = pickle.loads(path.read_bytes())
+                cache, fetched_from = stored.get("series", {}), stored.get("from", {})
             except Exception:
-                cache = {}
-        missing = [t for t in tickers if t not in cache]
+                cache, fetched_from = {}, {}
+        missing = [
+            t for t in tickers
+            if t not in cache or dt.date.fromisoformat(fetched_from.get(t, "9999-12-31")) > start
+        ]
         for i in range(0, len(missing), self.chunk_size):
             chunk = missing[i : i + self.chunk_size]
             try:
                 df = self.yf.download(
-                    chunk, period="2y", auto_adjust=True, progress=False, threads=True,
+                    chunk, start=start.isoformat(), auto_adjust=True, progress=False, threads=True,
                     group_by="column",
                 )
             except Exception as e:  # noqa: BLE001
@@ -120,11 +128,12 @@ class YFinanceProvider:
                     s = close[t].dropna()
                     if not s.empty:
                         cache[t] = s
+                        fetched_from[t] = start.isoformat()
         # Alte Cache-Dateien aufräumen
         for old in CACHE_DIR.glob("history_*.pkl"):
             if old != path:
                 old.unlink(missing_ok=True)
-        path.write_bytes(pickle.dumps(cache))
+        path.write_bytes(pickle.dumps({"series": cache, "from": fetched_from}))
         return {t: cache[t] for t in tickers if t in cache}
 
     def quote_meta(self, ticker: str) -> dict:

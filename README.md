@@ -25,7 +25,7 @@ Dann <http://localhost:8000> öffnen.
 | Eingabe | Format |
 |---|---|
 | Universum | Ein Ticker oder ISIN pro Zeile, oder CSV mit Spalte `Ticker`/`Symbol`/`ISIN`. Yahoo-Kürzel: `.DE` Xetra, `.SW` SIX, `.VI` Wien, `.L` London, `.PA` Paris, US-Titel ohne Suffix. ISINs werden automatisch aufgelöst. |
-| Portfolio | Tabelle im UI oder CSV `Ticker;Stück;Einstand` (deutsches Zahlenformat ok). |
+| Portfolio | Tabelle im UI oder CSV `Ticker;Stück;Kaufdatum` (Datum als `TT.MM.JJJJ` oder `JJJJ-MM-TT`, optional). Aus dem Kaufdatum berechnet das Tool Haltedauer und Kursentwicklung seit Kauf. |
 | Cash | Verfügbarer Betrag in Basiswährung. |
 
 Alle Eingaben werden im Browser (localStorage) gespeichert.
