@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading Assistant</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #667085; --border: #e3e6ea;
+  --accent: #2f5bd3; --buy: #137a3f; --buy-bg: #e3f4ea; --sell: #b42318; --sell-bg: #fde8e6;
+  --hold: #475467; --hold-bg: #eef0f3; --warn: #a15c00; --warn-bg: #fff3dc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #1a1e24; --text: #e6e8eb; --muted: #98a2b3; --border: #2b313a;
+    --accent: #7c9cff; --buy: #5fd394; --buy-bg: #133523; --sell: #ff8a80; --sell-bg: #3d1a17;
+    --hold: #c0c6cf; --hold-bg: #262b33; --warn: #f5b84f; --warn-bg: #3a2c12;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { padding: 20px 24px 8px; max-width: 1400px; margin: 0 auto; }
+h1 { margin: 0; font-size: 22px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+.sub { color: var(--muted); margin: 4px 0 0; }
+main { max-width: 1400px; margin: 0 auto; padding: 12px 24px 48px; display: grid; gap: 16px; grid-template-columns: 420px 1fr; align-items: start; }
+@media (max-width: 1000px) { main { grid-template-columns: 1fr; padding: 12px 16px 48px; } header { padding: 16px 16px 4px; } }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.stack { display: grid; gap: 16px; }
+textarea, input, select { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+textarea { min-height: 120px; font-family: ui-monospace, monospace; font-size: 13px; }
+label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 3px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+button { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 10px 16px; width: 100%; }
+button:disabled { opacity: .6; cursor: progress; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pos-table input { padding: 4px 6px; }
+.pos-table td { padding: 4px; border: 0; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.b-BUY, .b-ADD { color: var(--buy); background: var(--buy-bg); }
+.b-SELL, .b-REDUCE, .b-VETO { color: var(--sell); background: var(--sell-bg); }
+.b-HOLD { color: var(--hold); background: var(--hold-bg); }
+.b-CHECK, .b-vorsicht { color: var(--warn); background: var(--warn-bg); }
+.b-bestaetigen { color: var(--buy); background: var(--buy-bg); }
+.b-veto { color: var(--sell); background: var(--sell-bg); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.tile { background: var(--bg); border-radius: 8px; padding: 10px 12px; }
+.tile .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .l { color: var(--muted); font-size: 12px; }
+tr.rec { cursor: pointer; }
+tr.rec:hover td { background: var(--bg); }
+tr.detail td { background: var(--bg); padding: 12px 16px; }
+tr.detail ul { margin: 4px 0 8px; padding-left: 18px; }
+.warnbox { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.warnbox ul { margin: 0; padding-left: 18px; }
+.errbox { background: var(--sell-bg); color: var(--sell); border-radius: 8px; padding: 10px 12px; }
+.muted { color: var(--muted); }
+.scroll { overflow-x: auto; }
+details summary { cursor: pointer; font-weight: 600; }
+.disclaimer { font-size: 12px; color: var(--muted); }
+.pos { color: var(--buy); } .neg { color: var(--sell); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trading Assistant</h1>
+  <p class="sub">Momentum-Strategie · regelbasiertes Scoring + KI-Nachrichtenprüfung</p>
+</header>
+<main>
+  <div class="stack">
+    <section class="panel">
+      <h2>1 · Verfügbare Titel (Universum)</h2>
+      <textarea id="universe" placeholder="Ein Ticker oder eine ISIN pro Zeile, z. B.&#10;AAPL&#10;SAP.DE&#10;NESN.SW&#10;US67066G1040"></textarea>
+      <div class="row" style="margin-top:8px">
+        <input type="file" id="universeFile" accept=".csv,.txt" style="flex:1">
+        <span class="muted" id="universeCount"></span>
+      </div>
+      <p class="hint">Yahoo-Ticker (Börsenkürzel: .DE Xetra, .SW SIX, .VI Wien, .L London …) oder ISINs. Bei CSV wird die Spalte „Ticker“, „Symbol“ oder „ISIN“ bzw. die erste Spalte verwendet.</p>
+    </section>
+
+    <section class="panel">
+      <h2>2 · Aktuelles Portfolio</h2>
+      <table class="pos-table">
+        <thead><tr><th>Ticker / ISIN</th><th class="num">Stück</th><th class="num">Einstand</th><th></th></tr></thead>
+        <tbody id="positions"></tbody>
+      </table>
+      <div class="row" style="margin-top:8px">
+        <button id="addPos">+ Position</button>
+        <label style="margin:0;flex:1"><input type="file" id="portfolioFile" accept=".csv,.txt"></label>
+      </div>
+      <div style="margin-top:10px">
+        <label for="cash">Verfügbares Cash (<span class="ccy">EUR</span>)</label>
+        <input id="cash" type="number" step="0.01" min="0" value="0">
+      </div>
+      <p class="hint">CSV-Import: Spalten Ticker/ISIN; Stück; Einstandskurs (optional). Einstand in Handelswährung des Titels.</p>
+    </section>
+
+    <section class="panel">
+      <details>
+        <summary>3 · Einstellungen</summary>
+        <div class="grid2" style="margin-top:12px">
+          <div><label>Basiswährung</label><select id="base_currency"><option>EUR</option><option>CHF</option><option>USD</option><option>GBP</option></select></div>
+          <div><label>Zielanzahl Positionen</label><input id="num_positions" type="number" min="1" max="100" value="10"></div>
+          <div><label>Max. Gewicht je Titel (%)</label><input id="max_weight" type="number" min="1" max="100" value="15"></div>
+          <div><label>Cash-Reserve (%)</label><input id="cash_reserve" type="number" min="0" max="90" value="2"></div>
+          <div><label>Trailing-Stop (% unter 3M-Hoch)</label><input id="trailing_stop" type="number" min="1" max="90" value="20"></div>
+          <div><label>Halte-Zone (× Zielanzahl)</label><input id="sell_rank_buffer" type="number" min="1" max="10" step="0.5" value="2"></div>
+          <div><label>Min. Tradegröße (% Depot)</label><input id="min_trade_pct" type="number" min="0" max="50" step="0.5" value="2"></div>
+          <div><label>Bruchstücke erlaubt</label><select id="fractional_shares"><option value="false">Nein</option><option value="true">Ja</option></select></div>
+          <div><label>KI-Nachrichtenprüfung</label><select id="use_ai"><option value="true">An</option><option value="false">Aus</option></select></div>
+          <div><label>KI darf Käufe blockieren</label><select id="ai_can_veto"><option value="true">Ja</option><option value="false">Nein</option></select></div>
+        </div>
+        <p class="hint">Halte-Zone: Ein gehaltener Titel wird erst verkauft, wenn er aus den Top (Zielanzahl × Faktor) fällt – das reduziert unnötige Umschichtungen.</p>
+      </details>
+    </section>
+
+    <button class="primary" id="run">Empfehlungen berechnen</button>
+    <p class="disclaimer">Hinweis: Dieses Tool liefert modellbasierte Vorschläge, keine Anlageberatung. Kursdaten von Yahoo Finance können verzögert oder fehlerhaft sein. Prüfe jede Order vor der Ausführung.</p>
+  </div>
+
+  <div class="stack" id="results">
+    <section class="panel"><p class="muted" style="margin:0">Universum und Portfolio eingeben, dann „Empfehlungen berechnen“. Der erste Lauf mit einem großen Universum kann einige Minuten dauern (Kursdaten werden danach für den Tag zwischengespeichert).</p></section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STORE = "trading-assistant-v1";
+const SETTINGS = ["base_currency","num_positions","max_weight","cash_reserve","trailing_stop","sell_rank_buffer","min_trade_pct","fractional_shares","use_ai","ai_can_veto"];
+const PCT = new Set(["max_weight","cash_reserve","trailing_stop","min_trade_pct"]);
+const ACTION_DE = {BUY:"Kaufen", ADD:"Aufstocken", HOLD:"Halten", REDUCE:"Reduzieren", SELL:"Verkaufen", VETO:"Veto", CHECK:"Prüfen"};
+const VERDICT_DE = {bestaetigen:"bestätigt", vorsicht:"Vorsicht", veto:"Veto"};
+let lastResult = null;
+
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function parseNum(s){
+  s = String(s ?? "").trim().replace(/\s|'/g, "");
+  if (!s) return null;
+  if (s.includes(",") && s.includes(".")) s = s.lastIndexOf(",") > s.lastIndexOf(".") ? s.replace(/\./g,"").replace(",",".") : s.replace(/,/g,"");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  const n = parseFloat(s); return isFinite(n) ? n : null;
+}
+const fmt = (n, d=2) => n == null ? "–" : n.toLocaleString("de-DE", {minimumFractionDigits:d, maximumFractionDigits:d});
+const pct = (n, d=1) => n == null ? "–" : (n*100).toLocaleString("de-DE", {minimumFractionDigits:d, maximumFractionDigits:d}) + " %";
+const spct = (n) => n == null ? "–" : `<span class="${n>=0?"pos":"neg"}">${n>=0?"+":""}${pct(n)}</span>`;
+
+function splitRow(line){ return line.split(/[;\t,]/).map(c => c.trim().replace(/^"|"$/g, "")); }
+function findCol(header, names){ return header.findIndex(h => names.some(n => h.toLowerCase().includes(n))); }
+
+function parseUniverseText(text){
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const header = splitRow(lines[0]);
+  let col = findCol(header, ["ticker","symbol","isin"]);
+  let rows = lines;
+  if (col >= 0) rows = lines.slice(1); else col = 0;
+  return rows.map(l => splitRow(l)[col]).filter(s => s && /^[A-Za-z0-9.\-^=]+$/.test(s));
+}
+function parsePortfolioText(text){
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const sep = lines[0].includes(";") ? ";" : lines[0].includes("\t") ? "\t" : ",";
+  const split = l => l.split(sep).map(c => c.trim().replace(/^"|"$/g, ""));
+  const header = split(lines[0]);
+  let t = findCol(header, ["ticker","symbol","isin"]), s = findCol(header, ["shares","stück","stueck","anzahl","menge","quantity","bestand"]), c = findCol(header, ["avg","einstand","kaufkurs","cost"]);
+  let rows = lines;
+  if (t >= 0 && s >= 0) rows = lines.slice(1); else { t = 0; s = 1; c = 2; }
+  return rows.map(l => { const r = split(l); return {ticker: r[t], shares: parseNum(r[s]), avg_cost: c >= 0 ? parseNum(r[c]) : null}; })
+             .filter(p => p.ticker && p.shares);
+}
+
+function addPositionRow(p = {}){
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td><input class="p-t" value="${esc(p.ticker||"")}" placeholder="z. B. SAP.DE"></td>
+    <td><input class="p-s" style="text-align:right" value="${p.shares ?? ""}"></td>
+    <td><input class="p-c" style="text-align:right" value="${p.avg_cost ?? ""}" placeholder="opt."></td>
+    <td><button title="Entfernen" aria-label="Position entfernen">✕</button></td>`;
+  tr.querySelector("button").onclick = () => { tr.remove(); save(); };
+  tr.querySelectorAll("input").forEach(i => i.oninput = save);
+  $("positions").appendChild(tr);
+}
+function readPositions(){
+  return [...$("positions").querySelectorAll("tr")].map(tr => ({
+    ticker: tr.querySelector(".p-t").value.trim(),
+    shares: parseNum(tr.querySelector(".p-s").value),
+    avg_cost: parseNum(tr.querySelector(".p-c").value),
+  })).filter(p => p.ticker && p.shares);
+}
+function readSettings(){
+  const s = {};
+  for (const k of SETTINGS){
+    const v = $(k).value;
+    if (v === "true" || v === "false") s[k] = v === "true";
+    else if (k === "base_currency") s[k] = v;
+    else s[k] = PCT.has(k) ? parseNum(v)/100 : parseNum(v);
+  }
+  return s;
+}
+
+function save(){
+  try {
+    localStorage.setItem(STORE, JSON.stringify({universe: $("universe").value, positions: readPositions(), cash: $("cash").value,
+      settings: Object.fromEntries(SETTINGS.map(k => [k, $(k).value]))}));
+  } catch {}
+  $("universeCount").textContent = `${parseUniverseText($("universe").value).length} Titel`;
+  document.querySelectorAll(".ccy").forEach(e => e.textContent = $("base_currency").value);
+}
+function load(){
+  let st = null;
+  try { st = JSON.parse(localStorage.getItem(STORE)); } catch {}
+  if (st){
+    $("universe").value = st.universe || "";
+    (st.positions || []).forEach(addPositionRow);
+    $("cash").value = st.cash ?? 0;
+    for (const [k, v] of Object.entries(st.settings || {})) if ($(k)) $(k).value = v;
+  }
+  if (!$("positions").children.length) addPositionRow();
+  save();
+}
+
+$("universe").oninput = save; $("cash").oninput = save;
+SETTINGS.forEach(k => $(k).onchange = save);
+$("addPos").onclick = () => addPositionRow();
+$("universeFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  $("universe").value = parseUniverseText(await f.text()).join("\n"); save();
+};
+$("portfolioFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const ps = parsePortfolioText(await f.text());
+  $("positions").innerHTML = ""; ps.forEach(addPositionRow); if (!ps.length) addPositionRow(); save();
+};
+
+$("run").onclick = async () => {
+  const btn = $("run");
+  const universe = parseUniverseText($("universe").value);
+  const body = {universe, portfolio: {positions: readPositions(), cash: parseNum($("cash").value) || 0}, settings: readSettings()};
+  btn.disabled = true; btn.textContent = "Analysiere … (Kursdaten, Scoring" + (body.settings.use_ai ? ", KI-Prüfung)" : ")");
+  try {
+    const r = await fetch("/api/analyze", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+    lastResult = data; render(data);
+  } catch (e) {
+    $("results").innerHTML = `<section class="panel"><div class="errbox">Fehler: ${esc(e.message)}</div></section>`;
+  } finally { btn.disabled = false; btn.textContent = "Empfehlungen berechnen"; }
+};
+
+function render(d){
+  const ccy = d.base_currency;
+  const trades = d.recommendations.filter(r => r.trade_shares !== 0);
+  const buys = trades.filter(r => r.trade_value > 0).reduce((a, r) => a + r.trade_value, 0);
+  const sells = -trades.filter(r => r.trade_value < 0).reduce((a, r) => a + r.trade_value, 0);
+  let html = `<section class="panel"><h2>Übersicht <span class="muted" style="font-weight:400">· Stand ${esc(new Date(d.as_of).toLocaleString("de-DE"))}</span></h2>
+    <div class="tiles">
+      <div class="tile"><div class="l">Depotwert gesamt</div><div class="v">${fmt(d.total_value)} ${ccy}</div></div>
+      <div class="tile"><div class="l">Cash vorher → nachher</div><div class="v">${fmt(d.cash_before,0)} → ${fmt(d.cash_after,0)}</div></div>
+      <div class="tile"><div class="l">Käufe</div><div class="v pos">${fmt(buys,0)} ${ccy}</div></div>
+      <div class="tile"><div class="l">Verkäufe</div><div class="v neg">${fmt(sells,0)} ${ccy}</div></div>
+      <div class="tile"><div class="l">Orders</div><div class="v">${trades.length}</div></div>
+    </div>`;
+  if (d.warnings.length) html += `<div class="warnbox" style="margin-top:12px"><ul>${d.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>`;
+  html += `</section>`;
+
+  if (d.ai_summary) {
+    html += `<section class="panel"><h2>KI-Einschätzung</h2>
+      <p style="margin-top:0"><strong>Markt:</strong> ${esc(d.ai_summary.market_commentary)}</p>
+      <p><strong>Portfolio:</strong> ${esc(d.ai_summary.portfolio_summary)}</p>
+      ${d.ai_summary.vetoed.length ? `<p class="muted">Durch Veto blockiert: ${d.ai_summary.vetoed.map(esc).join(", ")}</p>` : ""}
+      <p class="hint">Modell: ${esc(d.ai_summary.model)} · basiert auf Yahoo-Finance-Nachrichten</p></section>`;
+  } else if (d.ai_error) {
+    html += `<section class="panel"><div class="warnbox">KI-Prüfung nicht verfügbar – Empfehlungen sind rein regelbasiert.<br><span class="muted">${esc(d.ai_error)}</span></div></section>`;
+  }
+
+  html += `<section class="panel"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">Empfehlungen</h2>
+    <button id="exportCsv">Orders als CSV</button></div>
+    <div class="scroll"><table><thead><tr><th>Aktion</th><th>Titel</th><th class="num">Stück</th><th class="num">Kurs</th><th class="num">Ordervolumen</th>
+    <th class="num">Gewicht Ist → Ziel</th><th class="num">Rang</th><th>KI</th></tr></thead><tbody>`;
+  d.recommendations.forEach((r, i) => {
+    const sh = r.trade_shares === 0 ? "–" : (r.trade_shares > 0 ? "+" : "") + fmt(r.trade_shares, r.trade_shares % 1 ? 4 : 0);
+    html += `<tr class="rec" data-i="${i}">
+      <td><span class="badge b-${r.action}">${ACTION_DE[r.action]}</span>${r.warnings.length ? ' <span title="Hinweise" class="badge b-CHECK">!</span>' : ""}</td>
+      <td><strong>${esc(r.ticker)}</strong><br><span class="muted">${esc(r.name || "")}</span></td>
+      <td class="num">${sh}</td>
+      <td class="num">${r.price != null ? fmt(r.price) + " " + esc(r.currency || "") : "–"}</td>
+      <td class="num">${r.trade_value ? fmt(r.trade_value, 0) + " " + ccy : "–"}</td>
+      <td class="num">${pct(r.current_weight)} → ${pct(r.target_weight)}</td>
+      <td class="num">${r.rank ?? "–"}</td>
+      <td>${r.ai ? `<span class="badge b-${r.ai.verdict}">${VERDICT_DE[r.ai.verdict]}</span>` : '<span class="muted">–</span>'}</td></tr>
+      <tr class="detail" id="det-${i}" hidden><td colspan="8">${detail(r)}</td></tr>`;
+  });
+  html += `</tbody></table></div><p class="hint">Zeile anklicken für Begründung. Verkäufe zuerst ausführen, damit Cash für Käufe frei wird.</p></section>`;
+
+  html += `<section class="panel"><h2>Ranking (Top ${d.ranking.length} im Universum)</h2><div class="scroll"><table><thead><tr>
+    <th class="num">Rang</th><th>Titel</th><th class="num">Score</th><th class="num">12-1M</th><th class="num">6M</th><th class="num">3M</th><th class="num">1M</th>
+    <th class="num">Vola</th><th class="num">RSI</th><th class="num">vom 3M-Hoch</th><th>Trend ok</th></tr></thead><tbody>
+    ${d.ranking.map(r => `<tr><td class="num">${r.rank}</td><td><strong>${esc(r.ticker)}</strong> <span class="muted">${esc(r.name || "")}</span></td>
+      <td class="num">${fmt(r.score)}</td><td class="num">${spct(r.metrics.mom_12_1)}</td><td class="num">${spct(r.metrics.ret_6m)}</td>
+      <td class="num">${spct(r.metrics.ret_3m)}</td><td class="num">${spct(r.metrics.ret_1m)}</td><td class="num">${pct(r.metrics.vol, 0)}</td>
+      <td class="num">${fmt(r.metrics.rsi14, 0)}</td><td class="num">${spct(r.metrics.drawdown_3m)}</td><td>${r.eligible ? "✓" : "–"}</td></tr>`).join("")}
+    </tbody></table></div></section>`;
+
+  if (Object.keys(d.resolved).length) html += `<section class="panel"><h2>ISIN-Zuordnung</h2><p class="hint" style="margin-top:0">${Object.entries(d.resolved).map(([k,v]) => `${esc(k)} → ${esc(v)}`).join(" · ")}</p></section>`;
+
+  $("results").innerHTML = html;
+  document.querySelectorAll("tr.rec").forEach(tr => tr.onclick = () => { const det = $("det-" + tr.dataset.i); det.hidden = !det.hidden; });
+  $("exportCsv").onclick = exportCsv;
+}
+
+function detail(r){
+  let h = `<strong>Modell</strong><ul>${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  if (r.pnl_pct != null) h += `<p style="margin:0 0 8px">Seit Kauf: ${spct(r.pnl_pct)}</p>`;
+  if (r.warnings.length) h += `<div class="warnbox" style="margin-bottom:8px"><ul>${r.warnings.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+  if (r.ai) {
+    h += `<strong>KI (${VERDICT_DE[r.ai.verdict]}, Nachrichtenlage ${esc(r.ai.news_sentiment)})</strong><p style="margin:4px 0 8px">${esc(r.ai.rationale)}</p>`;
+    if (r.ai.key_points.length) h += `<span class="muted">Fakten</span><ul>${r.ai.key_points.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+    if (r.ai.risks.length) h += `<span class="muted">Risiken</span><ul>${r.ai.risks.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  }
+  return h;
+}
+
+function exportCsv(){
+  const rows = [["Aktion","Ticker","Name","Stueck","Kurs","Waehrung","Ordervolumen_" + lastResult.base_currency,"Zielgewicht","KI_Urteil"]];
+  lastResult.recommendations.filter(r => r.trade_shares !== 0).forEach(r => rows.push([ACTION_DE[r.action], r.ticker, r.name || "", r.trade_shares,
+    r.price?.toFixed(2) ?? "", r.currency || "", r.trade_value.toFixed(2), (r.target_weight*100).toFixed(2) + "%", r.ai ? VERDICT_DE[r.ai.verdict] : ""]));
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], {type: "text/csv"}));
+  a.download = `orders_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+}
+
+load();
+</script>
+</body>
+</html>
