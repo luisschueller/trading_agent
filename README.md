@@ -71,6 +71,19 @@ Kosten: ein Lauf mit ~15 Titeln sind typischerweise einige Cent.
   und in `app/main.py → get_provider()` einsetzen.
 * Kursdaten werden pro Tag in `data/cache/` zwischengespeichert.
 
+## Online deployen (Render)
+
+1. Repo auf GitHub legen und pushen.
+2. <https://dashboard.render.com> → **New → Blueprint** → Repo wählen (`render.yaml` wird erkannt).
+3. `ANTHROPIC_API_KEY` eintragen. `APP_PASSWORD` wird automatisch generiert (Environment-Tab).
+4. Nach dem Build ist die App unter `https://trading-assistant-xxxx.onrender.com` erreichbar.
+   Anmeldung: beliebiger Benutzername + `APP_PASSWORD`.
+
+Hinweise: Der Free-Plan schläft nach 15 Min. Inaktivität ein (erster Aufruf dauert dann ~1 Min.).
+Yahoo Finance drosselt Rechenzentrums-IPs gelegentlich – bei leeren Kursdaten kurz warten oder
+das Universum verkleinern. Andere Docker-Hoster (Fly.io, Railway, Hugging Face Spaces) funktionieren
+mit demselben `Dockerfile`; `PORT` wird ausgewertet.
+
 ## Tests
 
 ```bash
