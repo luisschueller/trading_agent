@@ -29,6 +29,12 @@ class DemoProvider:
     def news(self, t, limit=8):
         return []
 
+    def earnings_date(self, t):
+        import datetime as dt
+
+        offset = zlib.crc32((t + "earn").encode()) % 90  # deterministisch 0–89 Tage
+        return dt.date.today() + dt.timedelta(days=int(offset))
+
     def fx_rate(self, a, b):
         to_eur = {"EUR": 1.0, "USD": 0.92, "CHF": 1.06}
         if a not in to_eur or b not in to_eur:

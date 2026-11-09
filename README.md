@@ -53,16 +53,23 @@ SMA50 > SMA200 sowie ein Abschlag bei RSI > 80. **Kaufbar** ist nur, wer im Aufw
 * **Auffüllen** mit den bestplatzierten kaufbaren Titeln bis zur Zielanzahl (Standard 10).
 * **Gewichte** invers zur Volatilität, gedeckelt (Standard 15 %), 2 % Cash-Reserve.
 * Trades unter 2 % des Depotwerts werden ignoriert; Stückzahlen abgerundet (Bruchstücke optional).
+* **Quartalszahlen-Sperre:** Liegt der nächste Zahlen-Termin (laut Yahoo) innerhalb von 5 Tagen,
+  wird ein Titel nicht neu gekauft oder aufgestockt („Warten“); der nächste Kandidat rückt nach.
+  Einstellbar, 0 = aus.
 * Fremdwährungen werden über Yahoo-FX in die Basiswährung umgerechnet.
 
-**3. KI-Prüfung (`app/ai.py`)** – Claude (Standard `claude-opus-5-5`) erhält für jeden Vorschlag
-die Kennzahlen und die aktuellen Yahoo-Finance-Nachrichten und urteilt *bestätigen / Vorsicht /
-Veto* mit Begründung. Ein **Veto** auf einen Kauf blockiert ihn; der nächste Kandidat rückt nach
+**3. KI-Prüfung (`app/ai.py`)** – Claude (Standard `claude-opus-5-5`) arbeitet in zwei Schritten:
+1. **Web-Recherche** (abschaltbar): Claude sucht per Websuche aktuelle Meldungen, Ad-hoc-Mitteilungen
+   und Termine zu jedem vorgeschlagenen Titel und schreibt ein Briefing mit Quellen-URLs.
+2. **Bewertung:** Mit Kennzahlen, Yahoo-Finance-Nachrichten und Briefing urteilt Claude je Titel
+   *bestätigen / Vorsicht / Veto* mit Begründung und Quellen. Ein **Veto** auf einen Kauf blockiert ihn; der nächste Kandidat rückt nach
 (drei Ersatzkandidaten werden vorab mitgeprüft). Verkäufe aus Risikoregeln kann die KI nicht
 aufheben, nur kommentieren. Lehnt das Modell eine Anfrage ab, übernimmt automatisch ein Fallback-Modell.
 
-Umgebungsvariablen: `TRADING_AI_MODEL`, `TRADING_AI_EFFORT` (`low`…`max`, Standard `medium`).
-Kosten: ein Lauf mit ~15 Titeln sind typischerweise einige Cent.
+Umgebungsvariablen: `TRADING_AI_MODEL`, `TRADING_AI_EFFORT` (`low`…`max`, Standard `medium`),
+`TRADING_AI_MAX_SEARCHES` (Obergrenze Websuchen pro Lauf, Standard 30).
+Kosten: ohne Websuche einige Cent pro Lauf; mit Websuche zusätzlich ca. 1 Cent pro Suche plus die
+gelesenen Suchergebnisse – bei ~15 Titeln grob 0,30–1 €. Dauer mit Websuche: ca. 1–3 Minuten.
 
 ## Anpassen
 

@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 RANKING_ROWS = 30
 AI_BACKUP_CANDIDATES = 3
 
-Reviewer = Callable[[list[Recommendation], dict[str, list[dict]], str], PortfolioReview]
+Reviewer = Callable[[list[Recommendation], dict[str, list[dict]], str, bool], tuple[PortfolioReview, dict]]
 
 
 def _clean(symbols: list[str]) -> list[str]:
@@ -113,6 +113,11 @@ def analyze(
     )
     with ThreadPoolExecutor(max_workers=8) as ex:
         metas = dict(zip(relevant, ex.map(provider.quote_meta, relevant)))
+        earnings = (
+            dict(zip(relevant, ex.map(provider.earnings_date, relevant)))
+            if st.earnings_blackout_days > 0 or st.use_ai
+            else {}
+        )
 
     quotes: dict[str, dict] = {}
     for t in relevant:
@@ -142,39 +147,52 @@ def analyze(
             "price_base": price * fx if fx else None,
             "currency": ccy,
             "name": meta.get("name"),
+            "next_earnings": earnings.get(t),
         }
 
+    # --- Regel: keine Käufe kurz vor Quartalszahlen
+    today = dt.date.today()
+    blocked: dict[str, tuple[str, str]] = {}
+    if st.earnings_blackout_days > 0:
+        for t, d in earnings.items():
+            if d and 0 <= (d - today).days <= st.earnings_blackout_days:
+                blocked[t] = ("WAIT", f"Quartalszahlen am {d:%d.%m.%Y} – Kauf/Aufstockung erst danach")
+
     cash = req.portfolio.cash
-    recs, summary = build_recommendations(scored, quotes, holdings, cash, st)
+    recs, summary = build_recommendations(scored, quotes, holdings, cash, st, blocked=blocked)
 
     # --- KI-Prüfung
     ai_summary, ai_error = None, None
     if st.use_ai and reviewer is not None and recs:
         target_set = {r.ticker for r in recs}
         backups = [
-            t for t in eligible if t not in target_set and t not in holdings and t in quotes
+            t for t in eligible
+            if t not in target_set and t not in holdings and t not in blocked and t in quotes
         ][:AI_BACKUP_CANDIDATES]
         backup_recs = []
         for t in backups:
             r = Recommendation(ticker=t, name=quotes[t].get("name"), action="BUY",
-                               rank=int(scored.loc[t, "rank"]), score=round(float(scored.loc[t, "score"]), 3))
+                               rank=int(scored.loc[t, "rank"]), score=round(float(scored.loc[t, "score"]), 3),
+                               next_earnings=quotes[t].get("next_earnings"))
             r.reasons.append("Ersatzkandidat, falls ein Kauf ein Veto erhält")
             backup_recs.append(r)
-        to_review = [r for r in recs if r.action != "CHECK"] + backup_recs
+        to_review = [r for r in recs if r.action not in ("CHECK", "WAIT")] + backup_recs
         with ThreadPoolExecutor(max_workers=8) as ex:
             news = dict(zip([r.ticker for r in to_review], ex.map(provider.news, [r.ticker for r in to_review])))
         try:
-            review = reviewer(to_review, news, st.base_currency)
+            review, research = reviewer(to_review, news, st.base_currency, st.web_research)
             by_ticker = {a.ticker.upper(): a for a in review.assessments}
-            blocked = set()
+            vetoed = []
             if st.ai_can_veto:
-                blocked = {
+                vetoed = [
                     r.ticker for r in to_review
                     if r.action in ("BUY", "ADD")
                     and by_ticker.get(r.ticker) is not None
                     and by_ticker[r.ticker].verdict == "veto"
-                }
-            if blocked:
+                ]
+            if vetoed:
+                for t in vetoed:
+                    blocked[t] = ("VETO", "KI-Veto aufgrund aktueller Nachrichten")
                 recs, summary = build_recommendations(scored, quotes, holdings, cash, st, blocked=blocked)
             for r in recs:
                 r.ai = by_ticker.get(r.ticker)
@@ -186,7 +204,8 @@ def analyze(
                 "market_commentary": review.market_commentary,
                 "portfolio_summary": review.portfolio_summary,
                 "model": ai_module.MODEL,
-                "vetoed": sorted(blocked),
+                "vetoed": sorted(vetoed),
+                "web_research": research,
             }
         except Exception as e:  # noqa: BLE001
             log.exception("KI-Prüfung fehlgeschlagen")

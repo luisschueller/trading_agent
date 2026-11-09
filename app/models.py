@@ -31,7 +31,11 @@ class Settings(BaseModel):
         0.02, ge=0, lt=1, description="Trades unter x% des Depotwerts werden ignoriert"
     )
     fractional_shares: bool = False
+    earnings_blackout_days: int = Field(
+        5, ge=0, le=60, description="Keine Käufe/Aufstockungen x Tage vor Quartalszahlen (0 = aus)"
+    )
     use_ai: bool = True
+    web_research: bool = Field(True, description="KI recherchiert zusätzlich per Websuche")
     ai_can_veto: bool = True
 
 
@@ -41,7 +45,7 @@ class AnalyzeRequest(BaseModel):
     settings: Settings = Field(default_factory=Settings)
 
 
-Action = Literal["BUY", "ADD", "HOLD", "REDUCE", "SELL", "VETO", "CHECK"]
+Action = Literal["BUY", "ADD", "HOLD", "REDUCE", "SELL", "WAIT", "VETO", "CHECK"]
 
 
 # ---------- KI-Ausgabe (Structured Output) ----------
@@ -54,6 +58,7 @@ class TickerAssessment(BaseModel):
     key_points: list[str]
     risks: list[str]
     rationale: str
+    sources: list[str]  # URLs aus der Web-Recherche (leer, wenn keine)
 
 
 class PortfolioReview(BaseModel):
@@ -85,6 +90,7 @@ class Recommendation(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     metrics: dict = Field(default_factory=dict)
     ai: Optional[TickerAssessment] = None
+    next_earnings: Optional[dt.date] = None
     purchase_date: Optional[dt.date] = None
     holding_days: Optional[int] = None
     entry_price: Optional[float] = None  # Schlusskurs am Kaufdatum (Handelswährung)

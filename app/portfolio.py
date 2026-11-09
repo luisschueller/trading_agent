@@ -67,11 +67,12 @@ def build_recommendations(
     holdings: dict[str, Position],
     cash: float,
     settings: Settings,
-    blocked: set[str] | None = None,
+    blocked: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[list[Recommendation], dict]:
-    """quotes[ticker] = {price, price_base, currency, name}. blocked = Titel, die nicht gekauft/
-    aufgestockt werden dürfen (z. B. KI-Veto)."""
-    blocked = blocked or set()
+    """quotes[ticker] = {price, price_base, currency, name, next_earnings}.
+    blocked = {ticker: (aktion, grund)} – Titel, die nicht gekauft/aufgestockt werden dürfen,
+    z. B. ("WAIT", "Quartalszahlen am …") oder ("VETO", "KI-Veto …")."""
+    blocked = blocked or {}
     N = settings.num_positions
     hold_zone = int(N * settings.sell_rank_buffer)
     warnings: list[str] = []
@@ -116,14 +117,18 @@ def build_recommendations(
 
     # --- 2. Auffüllen mit neuen Kandidaten
     target = list(keep)
+    skipped: list[str] = []  # wären gekauft worden, sind aber gesperrt
     candidates = [
         t
         for t in scored.index[scored["eligible"]]
-        if t not in holdings and t not in blocked and t in quotes and quotes[t].get("price_base")
+        if t not in holdings and t in quotes and quotes[t].get("price_base")
     ]
     for t in candidates:
         if len(target) >= N:
             break
+        if t in blocked:
+            skipped.append(t)
+            continue
         target.append(t)
     if len(target) < N:
         warnings.append(
@@ -167,6 +172,9 @@ def build_recommendations(
                     "drawdown_3m", "dist_52w_high", "above_sma200", "sma50_gt_sma200",
                 ]
             }
+        ne = q.get("next_earnings")
+        if ne:
+            r.next_earnings = ne
         pos = holdings.get(t)
         if pos and pos.purchase_date:
             r.purchase_date = pos.purchase_date
@@ -192,7 +200,7 @@ def build_recommendations(
         tv = target_values[t]
         if held and t in blocked and tv > r.current_value:
             tv = r.current_value
-            r.warnings.append("Aufstocken durch KI-Veto blockiert – Position bleibt unverändert.")
+            r.warnings.append(f"Kein Aufstocken: {blocked[t][1]}")
         diff = tv - r.current_value
         if held and abs(diff) < max(min_trade, 1e-9):
             r.target_value = tv
@@ -232,12 +240,13 @@ def build_recommendations(
         r.warnings.append(FROZEN_MSG)
         recs.append(r)
 
-    # Veto-Titel (nicht gehalten) sichtbar machen
-    for t in blocked:
-        if t not in holdings and t in scored.index:
-            r = base_rec(t, "VETO")
-            r.reasons.append("Wäre laut Modell gekauft worden, aber KI-Veto aufgrund aktueller Nachrichten")
-            recs.append(r)
+    # Gesperrte Kandidaten (wären gekauft worden) sichtbar machen
+    for t in skipped:
+        action, reason = blocked[t]
+        r = base_rec(t, action)
+        r.reasons.insert(0, f"Wäre laut Modell gekauft worden (Rang {int(scored.loc[t, 'rank'])}) – {reason}")
+        r.reasons.extend(_metric_reasons(scored.loc[t]))
+        recs.append(r)
 
     # --- 4. Cash-Prüfung: Käufe kürzen, falls Rundung/Frozen-Positionen nicht aufgehen
     cash_after = cash - sum(r.trade_value for r in recs)
@@ -252,7 +261,7 @@ def build_recommendations(
                 r.trade_value = r.trade_shares * r.price_base
         cash_after = cash - sum(r.trade_value for r in recs)
 
-    order = {"SELL": 0, "REDUCE": 1, "BUY": 2, "ADD": 3, "HOLD": 4, "CHECK": 5, "VETO": 6}
+    order = {"SELL": 0, "REDUCE": 1, "BUY": 2, "ADD": 3, "HOLD": 4, "CHECK": 5, "WAIT": 6, "VETO": 7}
     recs.sort(key=lambda r: (order[r.action], r.rank or 10**9))
     summary = {
         "total_value": total,

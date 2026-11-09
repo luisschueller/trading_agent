@@ -10,6 +10,7 @@ import json
 import logging
 import pickle
 import re
+import threading
 from pathlib import Path
 from typing import Protocol
 
@@ -30,6 +31,30 @@ class MarketDataProvider(Protocol):
     def history(self, tickers: list[str], start: dt.date | None = None) -> dict[str, pd.Series]: ...
     def quote_meta(self, ticker: str) -> dict: ...  # {"currency":..., "name":...}
     def news(self, ticker: str, limit: int = 8) -> list[dict]: ...
+    def earnings_date(self, ticker: str) -> dt.date | None: ...  # nächster Termin
+    def earnings_date(self, ticker: str) -> dt.date | None:
+        """Nächster Quartalszahlen-Termin laut Yahoo (tagesweise gecacht)."""
+        today = dt.date.today()
+        cached = self._earnings.get(ticker)
+        if cached and cached[0] == today.isoformat():
+            return dt.date.fromisoformat(cached[1]) if cached[1] else None
+        found: dt.date | None = None
+        try:
+            cal = self.yf.Ticker(ticker).calendar or {}
+            dates = cal.get("Earnings Date") or [] if isinstance(cal, dict) else []
+            upcoming = sorted(
+                d.date() if isinstance(d, dt.datetime) else d
+                for d in dates
+                if isinstance(d, (dt.date, dt.datetime))
+            )
+            upcoming = [d for d in upcoming if d >= today]
+            found = upcoming[0] if upcoming else None
+        except Exception as e:  # noqa: BLE001
+            log.info("Kein Zahlen-Termin für %s: %s", ticker, e)
+        self._earnings[ticker] = (today.isoformat(), found.isoformat() if found else None)
+        self._save_json("earnings.json", self._earnings)
+        return found
+
     def fx_rate(self, from_ccy: str, to_ccy: str) -> float | None: ...
 
 
@@ -55,6 +80,7 @@ class YFinanceProvider:
         self._meta: dict[str, dict] = self._load_json("meta.json")
         self._isin: dict[str, str] = self._load_json("isin.json")
         self._fx: dict[str, float] = {}
+        self._earnings: dict[str, tuple[str, str | None]] = self._load_json("earnings.json")
 
     # ---------- Cache-Helfer
     def _load_json(self, name: str) -> dict:
@@ -64,8 +90,13 @@ class YFinanceProvider:
         except Exception:
             return {}
 
+    _save_lock = threading.Lock()  # quote_meta/earnings_date laufen parallel in Threads
+
     def _save_json(self, name: str, data: dict) -> None:
-        (CACHE_DIR / name).write_text(json.dumps(data, indent=1))
+        with self._save_lock:
+            tmp = CACHE_DIR / f".{name}.tmp"
+            tmp.write_text(json.dumps(dict(data), indent=1))
+            tmp.replace(CACHE_DIR / name)
 
     def _hist_cache_path(self) -> Path:
         return CACHE_DIR / f"history_{dt.date.today().isoformat()}.pkl"

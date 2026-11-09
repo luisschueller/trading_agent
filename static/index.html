@@ -46,7 +46,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .b-BUY, .b-ADD { color: var(--buy); background: var(--buy-bg); }
 .b-SELL, .b-REDUCE, .b-VETO { color: var(--sell); background: var(--sell-bg); }
 .b-HOLD { color: var(--hold); background: var(--hold-bg); }
-.b-CHECK, .b-vorsicht { color: var(--warn); background: var(--warn-bg); }
+.b-CHECK, .b-WAIT, .b-vorsicht { color: var(--warn); background: var(--warn-bg); }
 .b-bestaetigen { color: var(--buy); background: var(--buy-bg); }
 .b-veto { color: var(--sell); background: var(--sell-bg); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
@@ -113,9 +113,13 @@ details summary { cursor: pointer; font-weight: 600; }
           <div><label>Halte-Zone (× Zielanzahl)</label><input id="sell_rank_buffer" type="number" min="1" max="10" step="0.5" value="2"></div>
           <div><label>Min. Tradegröße (% Depot)</label><input id="min_trade_pct" type="number" min="0" max="50" step="0.5" value="2"></div>
           <div><label>Bruchstücke erlaubt</label><select id="fractional_shares"><option value="false">Nein</option><option value="true">Ja</option></select></div>
+          <div><label>Keine Käufe x Tage vor Quartalszahlen</label><input id="earnings_blackout_days" type="number" min="0" max="60" value="5"></div>
           <div><label>KI-Nachrichtenprüfung</label><select id="use_ai"><option value="true">An</option><option value="false">Aus</option></select></div>
+          <div><label>KI-Websuche (Ad-hoc, Termine)</label><select id="web_research"><option value="true">An</option><option value="false">Aus</option></select></div>
           <div><label>KI darf Käufe blockieren</label><select id="ai_can_veto"><option value="true">Ja</option><option value="false">Nein</option></select></div>
         </div>
+        <p class="hint">Quartalszahlen-Sperre: Steht ein Zahlen-Termin bevor, wird ein Titel nicht neu gekauft oder aufgestockt („Warten“); der nächste Kandidat rückt nach. 0 = aus.</p>
+        <p class="hint">KI-Websuche: Claude recherchiert vor der Bewertung selbst aktuelle Meldungen (bessere Abdeckung europäischer Titel). Kostet mehr und dauert länger, typisch 1–3 Minuten.</p>
         <p class="hint">Halte-Zone: Ein gehaltener Titel wird erst verkauft, wenn er aus den Top (Zielanzahl × Faktor) fällt – das reduziert unnötige Umschichtungen.</p>
       </details>
     </section>
@@ -132,9 +136,9 @@ details summary { cursor: pointer; font-weight: 600; }
 <script>
 const $ = (id) => document.getElementById(id);
 const STORE = "trading-assistant-v1";
-const SETTINGS = ["base_currency","num_positions","max_weight","cash_reserve","trailing_stop","sell_rank_buffer","min_trade_pct","fractional_shares","use_ai","ai_can_veto"];
+const SETTINGS = ["base_currency","num_positions","max_weight","cash_reserve","trailing_stop","sell_rank_buffer","min_trade_pct","fractional_shares","earnings_blackout_days","use_ai","web_research","ai_can_veto"];
 const PCT = new Set(["max_weight","cash_reserve","trailing_stop","min_trade_pct"]);
-const ACTION_DE = {BUY:"Kaufen", ADD:"Aufstocken", HOLD:"Halten", REDUCE:"Reduzieren", SELL:"Verkaufen", VETO:"Veto", CHECK:"Prüfen"};
+const ACTION_DE = {BUY:"Kaufen", ADD:"Aufstocken", HOLD:"Halten", REDUCE:"Reduzieren", SELL:"Verkaufen", WAIT:"Warten", VETO:"Veto", CHECK:"Prüfen"};
 const VERDICT_DE = {bestaetigen:"bestätigt", vorsicht:"Vorsicht", veto:"Veto"};
 let lastResult = null;
 
@@ -256,7 +260,8 @@ $("run").onclick = async () => {
   const btn = $("run");
   const universe = parseUniverseText($("universe").value);
   const body = {universe, portfolio: {positions: readPositions(), cash: parseNum($("cash").value) || 0}, settings: readSettings()};
-  btn.disabled = true; btn.textContent = "Analysiere … (Kursdaten, Scoring" + (body.settings.use_ai ? ", KI-Prüfung)" : ")");
+  btn.disabled = true;
+  btn.textContent = "Analysiere … (Kursdaten, Scoring" + (body.settings.use_ai ? (body.settings.web_research ? ", Web-Recherche, KI-Prüfung – ca. 1–3 Min.)" : ", KI-Prüfung)") : ")");
   try {
     const r = await fetch("/api/analyze", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
     const data = await r.json();
@@ -288,7 +293,7 @@ function render(d){
       <p style="margin-top:0"><strong>Markt:</strong> ${esc(d.ai_summary.market_commentary)}</p>
       <p><strong>Portfolio:</strong> ${esc(d.ai_summary.portfolio_summary)}</p>
       ${d.ai_summary.vetoed.length ? `<p class="muted">Durch Veto blockiert: ${d.ai_summary.vetoed.map(esc).join(", ")}</p>` : ""}
-      <p class="hint">Modell: ${esc(d.ai_summary.model)} · basiert auf Yahoo-Finance-Nachrichten</p></section>`;
+      <p class="hint">Modell: ${esc(d.ai_summary.model)} · ${researchNote(d.ai_summary.web_research)}</p></section>`;
   } else if (d.ai_error) {
     html += `<section class="panel"><div class="warnbox">KI-Prüfung nicht verfügbar – Empfehlungen sind rein regelbasiert.<br><span class="muted">${esc(d.ai_error)}</span></div></section>`;
   }
@@ -328,8 +333,16 @@ function render(d){
   $("exportCsv").onclick = exportCsv;
 }
 
+function researchNote(w){
+  if (!w || !w.enabled) return "basiert auf Yahoo-Finance-Nachrichten (Websuche aus)";
+  if (w.error) return `Websuche fehlgeschlagen (${esc(w.error)}) – nur Yahoo-Nachrichten`;
+  return `Yahoo-Nachrichten + Web-Recherche (${w.searches} Suchen)`;
+}
+function safeUrl(u){ try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : null; } catch { return null; } }
+
 function detail(r){
   let h = `<strong>Modell</strong><ul>${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  if (r.next_earnings) h += `<p style="margin:0 0 8px">Nächste Quartalszahlen: ${fmtDate(r.next_earnings)}</p>`;
   if (r.purchase_date) h += `<p style="margin:0 0 8px">Gekauft am ${fmtDate(r.purchase_date)} (vor ${fmtHolding(r.holding_days)})` +
     (r.pnl_pct != null ? ` · Kurs damals ${fmt(r.entry_price)} ${esc(r.currency || "")} · seit Kauf ${spct(r.pnl_pct)}` : "") + `</p>`;
   if (r.warnings.length) h += `<div class="warnbox" style="margin-bottom:8px"><ul>${r.warnings.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
@@ -337,6 +350,8 @@ function detail(r){
     h += `<strong>KI (${VERDICT_DE[r.ai.verdict]}, Nachrichtenlage ${esc(r.ai.news_sentiment)})</strong><p style="margin:4px 0 8px">${esc(r.ai.rationale)}</p>`;
     if (r.ai.key_points.length) h += `<span class="muted">Fakten</span><ul>${r.ai.key_points.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
     if (r.ai.risks.length) h += `<span class="muted">Risiken</span><ul>${r.ai.risks.map(x => `<li>${esc(x)}</li>`).join("")}</ul>`;
+    const src = (r.ai.sources || []).map(safeUrl).filter(Boolean);
+    if (src.length) h += `<span class="muted">Quellen</span><ul>${src.map(u => `<li><a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(new URL(u).hostname)}</a></li>`).join("")}</ul>`;
   }
   return h;
 }

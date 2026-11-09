@@ -16,9 +16,13 @@ def series(drift: float, vol: float = 0.015, n: int = 500, seed: int = 0, start:
 
 
 class FakeProvider:
-    def __init__(self, data: dict[str, pd.Series], ccy: dict[str, str] | None = None):
+    def __init__(self, data: dict[str, pd.Series], ccy: dict[str, str] | None = None, earnings=None):
         self.data = data
         self.ccy = ccy or {}
+        self.earnings = earnings or {}
+
+    def earnings_date(self, t):
+        return self.earnings.get(t)
 
     def resolve(self, s):
         return {"US0378331005": "AAPL"}.get(s, s)
@@ -95,20 +99,22 @@ def test_ai_veto_replaces_candidate():
                     FakeProvider(data), reviewer=None)
     top_buy = next(r.ticker for r in first.recommendations if r.action == "BUY")
 
-    def reviewer(recs, news, ccy):
+    def reviewer(recs, news, ccy, web_research):
         assert all(r.ticker in news for r in recs)
+        assert web_research is True
         return PortfolioReview(
             market_commentary="m", portfolio_summary="p",
             assessments=[TickerAssessment(ticker=r.ticker, news_sentiment="neutral",
                                           verdict="veto" if r.ticker == top_buy else "bestaetigen",
-                                          key_points=[], risks=[], rationale="x") for r in recs],
-        )
+                                          key_points=[], risks=[], rationale="x", sources=[]) for r in recs],
+        ), {"enabled": True, "searches": 3, "error": None}
 
     res = analyze(base, FakeProvider(data), reviewer=reviewer)
     acts = {r.ticker: r.action for r in res.recommendations}
     assert acts[top_buy] == "VETO"
     assert sum(1 for a in acts.values() if a == "BUY") == 3
     assert res.ai_summary["vetoed"] == [top_buy]
+    assert res.ai_summary["web_research"]["searches"] == 3
     assert all(r.ai is not None for r in res.recommendations if r.action == "BUY")
 
 
@@ -157,3 +163,34 @@ def test_purchase_date_outside_history_warns():
     res = analyze(req, FakeProvider(data), reviewer=None)
     assert any("Kaufdatum" in w for w in res.warnings)
     assert next(r for r in res.recommendations if r.ticker == "AAPL").pnl_pct is None
+
+
+def test_earnings_blackout_blocks_buy_and_add():
+    import datetime as dt
+    data = make_universe()
+    base = Settings(num_positions=3, max_weight=0.5, use_ai=False)
+    first = analyze(AnalyzeRequest(universe=list(data), portfolio=Portfolio(cash=50_000), settings=base),
+                    FakeProvider(data), reviewer=None)
+    buys = [r.ticker for r in first.recommendations if r.action == "BUY"]
+    soon = dt.date.today() + dt.timedelta(days=2)
+    later = dt.date.today() + dt.timedelta(days=20)
+    prov = FakeProvider(data, earnings={buys[0]: soon, buys[1]: later})
+    res = analyze(AnalyzeRequest(universe=list(data), portfolio=Portfolio(cash=50_000), settings=base),
+                  prov, reviewer=None)
+    acts = {r.ticker: r for r in res.recommendations}
+    assert acts[buys[0]].action == "WAIT" and "Quartalszahlen" in acts[buys[0]].reasons[0]
+    assert acts[buys[1]].action == "BUY"  # Termin außerhalb des Sperrfensters
+    assert acts[buys[1]].next_earnings == later
+    assert sum(1 for r in res.recommendations if r.action == "BUY") == 3  # Nachrücker
+    # Sperre ausgeschaltet
+    off = analyze(AnalyzeRequest(universe=list(data), portfolio=Portfolio(cash=50_000),
+                                 settings=base.model_copy(update={"earnings_blackout_days": 0})),
+                  prov, reviewer=None)
+    assert not any(r.action == "WAIT" for r in off.recommendations)
+    # Gehaltene Position wird nicht aufgestockt
+    held = analyze(AnalyzeRequest(universe=list(data),
+                                  portfolio=Portfolio(positions=[Position(ticker=buys[0], shares=1)], cash=50_000),
+                                  settings=base), prov, reviewer=None)
+    h = next(r for r in held.recommendations if r.ticker == buys[0])
+    assert h.action == "HOLD" and h.trade_shares == 0
+    assert any("Quartalszahlen" in w for w in h.warnings)
