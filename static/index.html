@@ -256,17 +256,49 @@ $("portfolioFile").onchange = async e => {
   $("positions").innerHTML = ""; ps.forEach(addPositionRow); if (!ps.length) addPositionRow(); save();
 };
 
+// Antwort robust lesen: auch Fehlerseiten (HTML/Text) verständlich melden
+async function readJson(r){
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch {
+    const plain = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+    throw new Error(`Server antwortete mit HTTP ${r.status} ${r.statusText || ""} statt mit Daten` + (plain ? `: „${plain}“` : ""));
+  }
+  if (!r.ok) {
+    const d = data.detail;
+    const msg = typeof d === "string" ? d
+      : Array.isArray(d) ? d.map(x => `${(x.loc || []).slice(1).join(" → ")}: ${x.msg}`).join("; ")
+      : JSON.stringify(d ?? data);
+    const err = new Error(msg); err.status = r.status; throw err;
+  }
+  return data;
+}
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
 $("run").onclick = async () => {
   const btn = $("run");
   const universe = parseUniverseText($("universe").value);
   const body = {universe, portfolio: {positions: readPositions(), cash: parseNum($("cash").value) || 0}, settings: readSettings()};
-  btn.disabled = true;
-  btn.textContent = "Analysiere … (Kursdaten, Scoring" + (body.settings.use_ai ? (body.settings.web_research ? ", Web-Recherche, KI-Prüfung – ca. 1–3 Min.)" : ", KI-Prüfung)") : ")");
+  btn.disabled = true; btn.textContent = "Starte Analyse …";
   try {
-    const r = await fetch("/api/analyze", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-    const data = await r.json();
-    if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
-    lastResult = data; render(data);
+    const {job_id} = await readJson(await fetch("/api/jobs", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)}));
+    let failures = 0;
+    while (true) {
+      await sleep(2000);
+      let job;
+      try {
+        job = await readJson(await fetch(`/api/jobs/${job_id}`, {cache: "no-store"}));
+        failures = 0;
+      } catch (e) {
+        // kurze Netzaussetzer (z. B. Handy im Standby) tolerieren, echte Fehler sofort melden
+        if (e.status || ++failures > 15) throw e;
+        continue;
+      }
+      if (job.status === "done") { lastResult = job.result; render(job.result); break; }
+      if (job.status === "error") throw new Error(job.error);
+      btn.textContent = `${job.progress || "Analysiere"} … ${job.elapsed}s`;
+    }
   } catch (e) {
     $("results").innerHTML = `<section class="panel"><div class="errbox">Fehler: ${esc(e.message)}</div></section>`;
   } finally { btn.disabled = false; btn.textContent = "Empfehlungen berechnen"; }

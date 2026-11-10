@@ -43,8 +43,11 @@ def analyze(
     req: AnalyzeRequest,
     provider: MarketDataProvider,
     reviewer: Reviewer | None = ai_module.review,
+    progress: Callable[[str], None] | None = None,
 ) -> AnalyzeResponse:
     st = req.settings
+    step = progress or (lambda msg: None)
+    step("Ticker/ISIN zuordnen")
     warnings: list[str] = []
 
     # --- Ticker/ISIN auflösen
@@ -83,6 +86,7 @@ def analyze(
         raise ValueError("Universum und Portfolio sind leer.")
 
     # --- Kurse & Kennzahlen
+    step(f"Kursdaten laden ({len(all_tickers)} Titel)")
     hist = provider.history(all_tickers)
     dated = [h.purchase_date for h in holdings.values() if h.purchase_date]
     if dated:  # längere Historie für gehaltene Titel, damit der Kurs am Kaufdatum verfügbar ist
@@ -111,6 +115,7 @@ def analyze(
         + eligible[: st.num_positions + 15]
         + list(scored.index[:RANKING_ROWS])
     )
+    step("Währungen, Namen und Quartalszahlen-Termine laden")
     with ThreadPoolExecutor(max_workers=8) as ex:
         metas = dict(zip(relevant, ex.map(provider.quote_meta, relevant)))
         earnings = (
@@ -177,8 +182,10 @@ def analyze(
             r.reasons.append("Ersatzkandidat, falls ein Kauf ein Veto erhält")
             backup_recs.append(r)
         to_review = [r for r in recs if r.action not in ("CHECK", "WAIT")] + backup_recs
+        step("Nachrichten laden")
         with ThreadPoolExecutor(max_workers=8) as ex:
             news = dict(zip([r.ticker for r in to_review], ex.map(provider.news, [r.ticker for r in to_review])))
+        step("KI-Recherche und -Bewertung (dauert 1–3 Minuten)" if st.web_research else "KI-Bewertung")
         try:
             review, research = reviewer(to_review, news, st.base_currency, st.web_research)
             by_ticker = {a.ticker.upper(): a for a in review.assessments}

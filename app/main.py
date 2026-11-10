@@ -5,10 +5,14 @@ import base64
 import logging
 import os
 import secrets
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .data import YFinanceProvider
@@ -49,6 +53,14 @@ def healthz():
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+log = logging.getLogger("app")
+
+
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception):
+    """Unerwartete Fehler immer als JSON zurückgeben (statt Text-/HTML-Fehlerseite)."""
+    log.exception("Unerwarteter Fehler bei %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": f"Interner Fehler: {type(exc).__name__}: {exc}"})
 
 _provider = None
 
@@ -81,3 +93,67 @@ def run_analysis(req: AnalyzeRequest):
         return analyze(req, get_provider())
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+# ---------- Hintergrund-Aufträge ----------
+# Eine Analyse mit Web-Recherche dauert Minuten. Statt einer langen HTTP-Anfrage (die Proxys,
+# Mobilbrowser im Standby usw. abbrechen) startet der Browser einen Auftrag und fragt den Stand ab.
+
+JOB_TTL = 3600
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+_executor = ThreadPoolExecutor(max_workers=2)
+
+
+def _cleanup_jobs() -> None:
+    now = time.time()
+    with _jobs_lock:
+        for jid in [j for j, v in _jobs.items() if now - v["created"] > JOB_TTL]:
+            del _jobs[jid]
+
+
+def _run_job(job_id: str, req: AnalyzeRequest) -> None:
+    job = _jobs[job_id]
+
+    def progress(msg: str) -> None:
+        job["progress"] = msg
+
+    try:
+        result = analyze(req, get_provider(), progress=progress)
+        job["result"] = result.model_dump(mode="json")
+        job["status"] = "done"
+    except ValueError as e:
+        job["error"], job["status"] = str(e), "error"
+    except Exception as e:  # noqa: BLE001
+        log.exception("Analyse-Auftrag %s fehlgeschlagen", job_id)
+        job["error"], job["status"] = f"Interner Fehler: {type(e).__name__}: {e}", "error"
+    finally:
+        job["finished"] = time.time()
+
+
+@app.post("/api/jobs")
+def start_job(req: AnalyzeRequest):
+    _cleanup_jobs()
+    job_id = uuid.uuid4().hex
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "progress": "Warte auf Start", "created": time.time()}
+    _executor.submit(_run_job, job_id, req)
+    return {"job_id": job_id}
+
+
+@app.get("/api/jobs/{job_id}")
+def job_status(job_id: str):
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Auftrag nicht gefunden – der Server wurde vermutlich zwischenzeitlich neu gestartet "
+                   "(z. B. Deploy, Ruhemodus oder Speichermangel). Bitte erneut starten.",
+        )
+    out = {"status": job["status"], "progress": job.get("progress"),
+           "elapsed": round((job.get("finished") or time.time()) - job["created"])}
+    if job["status"] == "done":
+        out["result"] = job["result"]
+    elif job["status"] == "error":
+        out["error"] = job["error"]
+    return out
